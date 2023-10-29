@@ -1,11 +1,9 @@
 import os
 import pcbnew
-import gettext
-import wx, math
+#import gettext
+import math
 
 from pcbnew import VECTOR2I
-
-from . import auto_silkscreen_dialog
 
 # TODO
 # * Handle Drawings collision
@@ -16,7 +14,7 @@ def isSilkscreen(item):
     """Checks if an item is a visible silkscreen item."""
     if item is None:
         return False
-    elif not (item.IsOnLayer(pcbnew.B_SilkS) or item.IsOnLayer(pcbnew.F_SilkS)):    
+    elif not (item.IsOnLayer(pcbnew.B_SilkS) or item.IsOnLayer(pcbnew.F_SilkS)):
         return False
     elif hasattr(item, 'IsVisible'):
         if not item.IsVisible():
@@ -46,8 +44,8 @@ def filter_distance(item_center, max_d, list_items):
     return filtered_items
 
 class AutoSilkscreen:
-    def __init__(self):
-        self.pcb = pcbnew.GetBoard()
+    def __init__(self, pcb):
+        self.pcb = pcb
         self.set_max_allowed_distance(3)
         self.set_step_size(0.25)
         self.set_only_process_selection(False)
@@ -152,33 +150,33 @@ class AutoSilkscreen:
                 for j in range(0, int(fp_bb.GetWidth()/2 + i), self.step_size):
                     item.SetY(int(fp_bb.GetTop() - item_bb.GetHeight()/2.0*self.__deflate_factor__ - i))
                     item.SetX(int(fp_bb.GetCenter().x - j))
-                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration 
+                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration
 
                     item.SetX(int(fp_bb.GetCenter().x + j))
-                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration 
+                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration
 
                     item.SetY(int(fp_bb.GetBottom() + item_bb.GetHeight()/2.0*self.__deflate_factor__ + i))
                     item.SetX(int(fp_bb.GetCenter().x - j))
-                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration 
+                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration
 
                     item.SetX(int(fp_bb.GetCenter().x + j))
-                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration 
+                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration
 
                 # Sweep y coords: left (top/bot from center), right (top/bot from center)
                 for j in range(0, int(fp_bb.GetHeight()/2 + i), self.step_size):
                     item.SetX(int(fp_bb.GetLeft() - item_bb.GetWidth()/2.0*self.__deflate_factor__ - i))
                     item.SetY(int(fp_bb.GetCenter().y - j))
-                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration 
+                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration
 
                     item.SetY(int(fp_bb.GetCenter().y + j))
-                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration 
+                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration
 
                     item.SetX(int(fp_bb.GetRight() + item_bb.GetWidth()/2.0*self.__deflate_factor__ + i))
                     item.SetY(int(fp_bb.GetCenter().y - j))
-                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration 
+                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration
 
                     item.SetY(int(fp_bb.GetCenter().y + j))
-                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration 
+                    if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): raise StopIteration
             # Reset to initial position if not able to be moved
             item.SetPosition(initial_pos)
             if self.debug:
@@ -231,8 +229,8 @@ class AutoSilkscreen:
 
             fp_bb = fp.GetBoundingBox(False,False)
             ref_bb = ref.GetBoundingBox()
-            value_bb = value.GetBoundingBox()        
-            
+            value_bb = value.GetBoundingBox()
+
             max_fp_size = math.hypot(fp_bb.GetWidth(), fp_bb.GetHeight())/2 + self.max_allowed_distance
             if isSilkscreen(ref) and isSilkscreen(value):
                 max_fp_size += max(math.hypot(ref_bb.GetWidth(),ref_bb.GetHeight()), math.hypot(value_bb.GetWidth(),value_bb.GetHeight()))/2
@@ -266,29 +264,3 @@ class AutoSilkscreen:
             log('Finished ({}/{} moved)'.format(nb_moved,nb_total))
 
         return nb_moved, nb_total
-
-class AutoSilkscreenPlugin(pcbnew.ActionPlugin):
-    def defaults(self):
-        self.name = u"AutoSilkscreen"
-        self.category = u"Modify PCB"
-        self.description = u"Automatically moves the silkscreen reference designators to prevent overlap"
-        self.show_toolbar_button = True
-        self.icon_file_name = os.path.join(os.path.dirname(__file__), 'logo.png')
-
-    def Run(self):
-        dialog = auto_silkscreen_dialog.AutoSilkscreenDialog(None)
-        modal_result = dialog.ShowModal()
-        if modal_result == wx.ID_OK:
-            try:
-                a = AutoSilkscreen()
-                a.set_step_size(float(dialog.m_stepSize.GetValue().replace(',', '.')))
-                a.set_max_allowed_distance(float(dialog.m_maxDistance.GetValue().replace(',', '.')))
-                a.set_only_process_selection(dialog.m_onlyProcessSelection.IsChecked())
-                a.set_ignore_vias(dialog.m_silkscreenOnVia.IsChecked())
-                
-                nb_moved, nb_total = a.run()
-                wx.MessageBox('Successfully moved {}/{} items!'.format(nb_moved,nb_total), 'AutoSilkscreen completed', wx.OK)
-            except ValueError:
-                wx.MessageBox("Invalid value entered.",'AutoSilkscreen error',wx.ICON_ERROR | wx.OK)
-        dialog.Destroy()
-            
