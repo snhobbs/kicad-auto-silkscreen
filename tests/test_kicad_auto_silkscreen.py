@@ -2,11 +2,9 @@
 
 """Tests for `kicad_auto_silkscreen` package."""
 
-
 import unittest
-from click.testing import CliRunner
 
-from kicad_auto_silkscreen import kicad_auto_silkscreen
+from click.testing import CliRunner
 from kicad_auto_silkscreen import cli
 
 
@@ -27,7 +25,7 @@ class TestKicad_auto_silkscreen(unittest.TestCase):
         runner = CliRunner()
         result = runner.invoke(cli.main)
         assert result.exit_code == 0
-        assert 'kicad_auto_silkscreen.cli.main' in result.output
-        help_result = runner.invoke(cli.main, ['--help'])
+        assert "kicad_auto_silkscreen.cli.main" in result.output
+        help_result = runner.invoke(cli.main, ["--help"])
         assert help_result.exit_code == 0
-        assert '--help  Show this message and exit.' in help_result.output
+        assert "--help  Show this message and exit." in help_result.output
