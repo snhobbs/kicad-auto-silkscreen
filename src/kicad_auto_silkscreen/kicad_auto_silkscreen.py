@@ -11,6 +11,9 @@ from pcbnew import VECTOR2I
 # * Optimization: sort items in quads, only look for neighboring quads.
 # * Reduce text size option
 
+_log = logging.getLogger("kicad_auto_silkscreen")
+_log.setLevel(logging.DEBUG)
+
 
 def isSilkscreen(item):
     """Checks if an item is a visible silkscreen item."""
@@ -22,11 +25,6 @@ def isSilkscreen(item):
         if not item.IsVisible():
             return False
     return True
-
-
-def log(msg):
-    # wx.LogMessage(str(msg))
-    logging.debug(str(msg))
 
 
 def BB_in_SHAPE_POLY_SET(bb, poly, all_in=False):
@@ -71,7 +69,6 @@ class AutoSilkscreen:
         self.set_max_allowed_distance(5)
         self.set_step_size(0.1)
         self.set_only_process_selection(False)
-        self.set_debug(True)
         self.set_ignore_vias(True)
         self.__deflate_factor__ = 1
 
@@ -90,10 +87,6 @@ class AutoSilkscreen:
 
     def set_only_process_selection(self, only_process_selection: bool):
         self.only_process_selection = only_process_selection
-        return self
-
-    def set_debug(self, debug: bool):
-        self.debug = debug
         return self
 
     def set_ignore_vias(self, ignore_via: bool):
@@ -161,7 +154,6 @@ class AutoSilkscreen:
             ):
                 return False
 
-        # Check if ref is colliding with any via
         for via in vias:
             if (via.TopLayer() == pcbnew.F_Cu and item.IsOnLayer(pcbnew.F_SilkS)) or (
                 via.BottomLayer() == pcbnew.B_Cu and item.IsOnLayer(pcbnew.B_SilkS)
@@ -348,19 +340,20 @@ class AutoSilkscreen:
                         raise StopIteration
             # Reset to initial position if not able to be moved
             item.SetPosition(initial_pos)
-            if self.debug:
-                log(f"{fp.GetReference()!s} couldn't be moved")
+            _log.debug(f"{fp.GetReference()!s} couldn't be moved")
             return 0
         except StopIteration:
-            if self.debug:
-                log(
-                    f"{fp.GetReference()!s} moved to ({pcbnew.ToMM(item.GetPosition().x):.2f},{pcbnew.ToMM(item.GetPosition().y):.2f})"
-                )
+            _log.debug(
+                f"{fp.GetReference()!s} moved to ({pcbnew.ToMM(item.GetPosition().x):.2f},{pcbnew.ToMM(item.GetPosition().y):.2f})"
+            )
             return 1
 
     def run(self):
         # Get PCB collision items
         # Get the vias (except buried vias)
+        _log.setLevel(logging.DEBUG)
+        _log.info("RUN")
+        _log.debug("RUN")
         vias_all = [
             trk
             for trk in self.pcb.Tracks()
@@ -371,35 +364,29 @@ class AutoSilkscreen:
         # Get the PTH/NPTH pads
         tht_pads_all = [pad for pad in self.pcb.GetPads() if pad.HasHole()]
         # Get the silkscreen drawings
-        try:
-            dwgs_all = [dwg for dwg in self.pcb.GetDrawings() if isSilkscreen(dwg)]
-        except Exception:
-            dwgs_all = []
+        dwgs_all = [dwg for dwg in self.pcb.GetDrawings() if isSilkscreen(dwg)]
         # Get solder mask
-        try:
-            mask_all = [
-                dwg
-                for dwg in self.pcb.GetDrawings()
-                if dwg.IsOnLayer(pcbnew.F_Mask) or dwg.IsOnLayer(pcbnew.B_Mask)
-            ]
-        except Exception:
-            mask_all = []
+        mask_all = [
+            dwg
+            for dwg in self.pcb.GetDrawings()
+            if dwg.IsOnLayer(pcbnew.F_Mask) or dwg.IsOnLayer(pcbnew.B_Mask)
+        ]
         # Get footprints
         fp_all = list(self.pcb.GetFootprints())
         # Get board outline
         board_edge = pcbnew.SHAPE_POLY_SET()
         self.pcb.GetBoardPolygonOutlines(board_edge)
 
-        if self.debug:
-            import timeit
+        import timeit
 
-            starttime = timeit.default_timer()
+        starttime = timeit.default_timer()
 
         nb_total = 0
         nb_moved = 0
 
         # Loop over each component of the PCB
         for fp in fp_all:
+            _log.debug(f"{fp!r}")
             # Check if the FP should processed
             if self.only_process_selection and not fp.IsSelected():
                 continue
@@ -456,8 +443,7 @@ class AutoSilkscreen:
                     False, fp, modules, board_edge, vias, tht_pads, masks, dwgs
                 )
 
-        if self.debug:
-            log(f"Execution time is {timeit.default_timer() - starttime:.2f}s")
-            log(f"Finished ({nb_moved}/{nb_total} moved)")
+        _log.info(f"Execution time is {timeit.default_timer() - starttime:.2f}s")
+        _log.info(f"Finished ({nb_moved}/{nb_total} moved)")
 
         return nb_moved, nb_total
