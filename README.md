@@ -26,6 +26,16 @@ Use the button in the toolbar to open the plugin window and configure its parame
 
 The processing time of the plugin depend on the complexity of the PCB and the value of the parameters. It can take multiple minutes.
 
+## Upgrades
++ Turn all objects into a bounding box. Some are movable (silkscreen value & ref des labels), some immovable (i.e. pads)
++ Recursive alogorithm with boxes of boxes
++ No rotation of parts (possible feature later for none grouped parts only)
++ Sets of movable parts can be grouped, outlined and have a line drawn to the location of the group
++ If the density is too high then the text size is shrunk. This can be used recursively for blocks themselves if the density is too high
+
+## References
++ https://github.com/coffeenmusic/Silkscreen_Auto_Placer
+
 ## License
 
 This plugin is published under MIT license.
