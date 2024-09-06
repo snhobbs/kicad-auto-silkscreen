@@ -3,7 +3,7 @@ The workflows are currently not working so here's the manual method:
 
 + Bump the version to match the tag:
 ```python
-bumpversion --current-version 1.7 patch plugin/pcm/metadata_template.json
+bumpversion {patch|minor|major}
 ```
 + Make the tag
 + Run the build script

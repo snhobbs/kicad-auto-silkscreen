@@ -61,7 +61,7 @@ else:
 md["versions"][0].update(
     {
         "version": verstr,
-        "download_url": f"https://gitlab.com/dennevi/kicad-plugins-releases/-/raw/main/Board2Pdf/releases/Board2Pdf_v{verstr}.zip",
+        "download_url": f"https://github.com/CGrassin/kicad-auto-silkscreen/releases/download/v{verstr}/kicad-auto-silkscreen-{verstr}.zip",
     }
 )
 
@@ -71,7 +71,7 @@ with metadata.open("w") as of:
 
 # Zip all files
 
-pcm_name = "releases/Board2Pdf_v{0}".format(md["versions"][0]["version"])
+pcm_name = "releases/kicad-auto-silkscreen-{0}".format(md["versions"][0]["version"])
 pcm_path = build_path / pcm_name
 zip_file = shutil.make_archive(pcm_path, "zip", build_path / "plugin")
 
