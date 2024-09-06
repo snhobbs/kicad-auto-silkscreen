@@ -1,0 +1,1 @@
+../../src/kicad_auto_silkscreen/kicad_auto_silkscreen.py
