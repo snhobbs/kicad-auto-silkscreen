@@ -1,6 +1,6 @@
 # KiCad Auto Silkscreen Placer
 
-**Compatibility:** KiCad 7.0. *Not tested with KiCad 6.0.*
+**Compatibility:** KiCad 8.0. *Not tested with KiCad 6.0.*
 
 ## Plugin presentation
 
