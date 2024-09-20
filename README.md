@@ -26,6 +26,12 @@ Use the button in the toolbar to open the plugin window and configure its parame
 
 The processing time of the plugin depend on the complexity of the PCB and the value of the parameters. It can take multiple minutes.
 
+## Speed
+The speed is dominated by the time it takes to calculate an object collision. Out of a time of 855.025 the built-in collision calculation takes 542s.
+```
+14508404  542.707    0.000  542.707    0.000 {built-in method _pcbnew.SHAPE_POLY_SET_Collide}
+```
+
 ## License
 
 This plugin is published under MIT license.

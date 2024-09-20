@@ -6,10 +6,7 @@ import pcbnew
 from . import kicad_auto_silkscreen
 
 
-@click.command()
-@click.option("--board", required=True)
-@click.option("--out", required=True)
-def main(board, out):
+def main_(board):
     logging.basicConfig()
     logging.getLogger().setLevel(logging.DEBUG)
 
@@ -20,8 +17,15 @@ def main(board, out):
     a.set_ignore_vias(True)
 
     nb_moved, nb_total = a.run()
+    return a.pcb
 
-    a.pcb.Save(out)
+
+@click.command()
+@click.option("--board", required=True)
+@click.option("--out", required=True)
+def main(board, out):
+    pcb = main(board)
+    pcb.save(out)
 
 
 if __name__ == "__main__":
