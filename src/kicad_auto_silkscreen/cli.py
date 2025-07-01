@@ -6,7 +6,7 @@ import pcbnew
 from . import kicad_auto_silkscreen
 
 
-def main_(board):
+def run(board):
     logging.basicConfig()
     logging.getLogger().setLevel(logging.DEBUG)
 
@@ -21,11 +21,11 @@ def main_(board):
 
 
 @click.command()
-@click.option("--board", required=True)
-@click.option("--out", required=True)
+@click.option("--board", type=str, required=True)
+@click.option("--out", type=str, required=True)
 def main(board, out):
-    pcb = main(board)
-    pcb.save(out)
+    pcb = run(board=board)
+    pcb.save(out=out)
 
 
 if __name__ == "__main__":
