@@ -5,11 +5,9 @@ from typing import Any, List, Tuple
 import pcbnew
 from pcbnew import VECTOR2I
 import numpy as np
-import numpy as np
 from scipy.optimize import dual_annealing
 
-
-# --- Config and Utility Classes ---
+INF_ERROR_VALUE = 1e6
 
 @dataclass
 class SilkscreenConfig:
@@ -31,8 +29,6 @@ def is_silkscreen(item) -> bool:
         return False
     return True
 
-def distance(a, b) -> float:
-    return math.hypot(a.x - b.x, a.y - b.y)
 
 def filter_distance(item_center, max_d, list_items) -> list:
     item_cx = item_center.x
@@ -95,7 +91,7 @@ class AutoSilkscreen:
         else:
             logging.basicConfig(level=logging.INFO)
         if self.config.method == "anneal":
-            self.place_field = self.place_field_annealling
+            self.place_field = self.place_field_annealing
         else:
             self.place_field = self.place_field_brute_force
 
@@ -148,11 +144,12 @@ class AutoSilkscreen:
                 max_fp_size += math.hypot(value_bb.GetWidth(), value_bb.GetHeight()) / 2
 
             # Filter for local collisions
-            vias = filter_distance(fp_bb.GetCenter(), max_fp_size, vias_all)
-            modules = filter_distance(fp_bb.GetCenter(), max_fp_size, fp_all)
-            tht_pads = filter_distance(fp_bb.GetCenter(), max_fp_size, tht_pads_all)
-            masks = filter_distance(fp_bb.GetCenter(), max_fp_size, mask_all)
-            dwgs = filter_distance(fp_bb.GetCenter(), max_fp_size, dwgs_all)
+            fp_bb_center = fp_bb.GetCenter()
+            vias = filter_distance(fp_bb_center, max_fp_size, vias_all)
+            modules = filter_distance(fp_bb_center, max_fp_size, fp_all)
+            tht_pads = filter_distance(fp_bb_center, max_fp_size, tht_pads_all)
+            masks = filter_distance(fp_bb_center, max_fp_size, mask_all)
+            dwgs = filter_distance(fp_bb_center, max_fp_size, dwgs_all)
 
             if is_silkscreen(ref):
                 nb_total += 1
@@ -168,7 +165,7 @@ class AutoSilkscreen:
         return nb_moved, nb_total
 
 
-    def place_field_annealling(self, is_reference: bool, fp, modules, board_edge, vias, tht_pads, masks, dwgs) -> bool:
+    def place_field_annealing(self, is_reference: bool, fp, modules, board_edge, vias, tht_pads, masks, dwgs) -> bool:
         """
         Use simulated annealing (dual_annealing) to optimize silkscreen field placement.
         Returns True if a valid position is found and set, else False.
@@ -195,7 +192,7 @@ class AutoSilkscreen:
             # Quick preliminary check - e.g., bounding box inside board edges
             if not bb_in_shape_poly_set(item.GetBoundingBox(), board_edge, all_in=True):
                 item.SetPosition(prev_pos)
-                return 1e6
+                return INF_ERROR_VALUE
 
             valid = self.is_position_valid(
                 item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, is_reference
@@ -206,7 +203,7 @@ class AutoSilkscreen:
 
             if not valid:
                 # Large penalty plus a small distance term to encourage moves closer to center
-                return 1e6 + np.hypot(pos_mm[0] - center_x_mm, pos_mm[1] - center_y_mm)
+                return INF_ERROR_VALUE + np.hypot(pos_mm[0] - center_x_mm, pos_mm[1] - center_y_mm)
             # Minimize distance to center
             return np.hypot(pos_mm[0] - center_x_mm, pos_mm[1] - center_y_mm)
 
@@ -290,8 +287,6 @@ class AutoSilkscreen:
 
         for fp2 in modules:
             fp_shape = fp2.GetCourtyard(item.GetLayer())
-            if fp_shape.Collide(item_shape):
-                return False
             ref_fp = fp2.Reference()
             if ((is_reference and fp != fp2) or not is_reference) and is_silkscreen(ref_fp) \
                 and ref_fp.IsOnLayer(item.GetLayer()) and bb_item.Intersects(ref_fp.GetBoundingBox()):
@@ -301,6 +296,9 @@ class AutoSilkscreen:
                 and ((not is_reference and fp != fp2) or is_reference) \
                 and value_fp.IsOnLayer(item.GetLayer()) \
                 and bb_item.Intersects(value_fp.GetBoundingBox()):
+                return False
+
+            if fp_shape.Collide(item_shape):
                 return False
 
         for via in vias:
