@@ -16,7 +16,7 @@ class DynamicSilkscreenCommand(click.Command):
 
             # Handle boolean flags
             if field_type == bool:
-                option = click.Option(param_decls=[option_name], is_flag=True, default=default_value)
+                option = click.Option(param_decls=[option_name], is_flag=True, default=dault_value)
             else:
                 # For other types, use the appropriate click type (str, int, float, etc.)
                 option = click.Option(param_decls=[option_name], default=default_value, type=field_type)
@@ -34,6 +34,9 @@ def main(board, out, **config_options):
     a = kicad_auto_silkscreen.AutoSilkscreen(pcb=pcbnew.LoadBoard(board), config=config)
     nb_moved, nb_total = a.run()
     a.pcb.Save(out)
+    click.echo(f"Config: {config}")
+    click.echo(f"Board: {board}")
+    click.echo(f"Output file: {out}")
 
 
 if __name__ == "__main__":
