@@ -32,6 +32,16 @@ The speed is dominated by the time it takes to calculate an object collision. Ou
 14508404  542.707    0.000  542.707    0.000 {built-in method _pcbnew.SHAPE_POLY_SET_Collide}
 ```
 
+## Upgrades
++ Turn all objects into a bounding box. Some are movable (silkscreen value & ref des labels), some immovable (i.e. pads)
++ Recursive alogorithm with boxes of boxes
++ No rotation of parts (possible feature later for none grouped parts only)
++ Sets of movable parts can be grouped, outlined and have a line drawn to the location of the group
++ If the density is too high then the text size is shrunk. This can be used recursively for blocks themselves if the density is too high
+
+## References
++ https://github.com/coffeenmusic/Silkscreen_Auto_Placer
+
 ## License
 
 This plugin is published under MIT license.
