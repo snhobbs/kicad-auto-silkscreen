@@ -1,449 +1,239 @@
 import logging
-
-# import gettext
 import math
-
+from dataclasses import dataclass
+from typing import Any, List, Tuple
 import pcbnew
 from pcbnew import VECTOR2I
+import numpy as np
 
-# TODO
-# * Handle Drawings collision
-# * Optimization: sort items in quads, only look for neighboring quads.
-# * Reduce text size option
+# --- Config and Utility Classes ---
 
-_log = logging.getLogger("kicad_auto_silkscreen")
-_log.setLevel(logging.DEBUG)
+@dataclass
+class SilkscreenConfig:
+    max_allowed_distance: float = 5.0   # mm
+    step_size: float = 0.1              # mm
+    only_process_selection: bool = False
+    ignore_vias: bool = True
+    deflate_factor: float = 1.0
+    debug: bool = True
 
-
-def isSilkscreen(item):
-    """Checks if an item is a visible silkscreen item."""
-    if item is None or not (
-        item.IsOnLayer(pcbnew.B_SilkS) or item.IsOnLayer(pcbnew.F_SilkS)
-    ):
+def is_silkscreen(item) -> bool:
+    if item is None:
         return False
-    elif hasattr(item, "IsVisible"):
-        if not item.IsVisible():
-            return False
+    if not (item.IsOnLayer(pcbnew.B_SilkS) or item.IsOnLayer(pcbnew.F_SilkS)):
+        return False
+    if hasattr(item, "IsVisible") and not item.IsVisible():
+        return False
     return True
 
+def distance(a, b) -> float:
+    return math.hypot(a.x - b.x, a.y - b.y)
 
-def BB_in_SHAPE_POLY_SET(bb, poly, all_in=False):
-    """Checks if a BOX2I is contained in a SHAPE_POLY_SET."""
-    if all_in:
-        return (
-            poly.Contains(VECTOR2I(bb.GetLeft(), bb.GetTop()))
-            and poly.Contains(VECTOR2I(bb.GetRight(), bb.GetTop()))
-            and poly.Contains(VECTOR2I(bb.GetLeft(), bb.GetBottom()))
-            and poly.Contains(VECTOR2I(bb.GetRight(), bb.GetBottom()))
-            and poly.Contains(VECTOR2I(bb.GetCenter().x, bb.GetCenter().y))
-        )
-    return (
-        poly.Contains(VECTOR2I(bb.GetLeft(), bb.GetTop()))
-        or poly.Contains(VECTOR2I(bb.GetRight(), bb.GetTop()))
-        or poly.Contains(VECTOR2I(bb.GetLeft(), bb.GetBottom()))
-        or poly.Contains(VECTOR2I(bb.GetRight(), bb.GetBottom()))
-        or poly.Contains(VECTOR2I(bb.GetCenter().x, bb.GetCenter().y))
-    )
-
-
-def distance(a, b):
-    """Compute the distance between two points."""
-    return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
-
-
-def filter_distance(item_center, max_d, list_items):
-    """Filters a list of items based on the distance to a point."""
+def filter_distance(item_center, max_d, list_items) -> list:
     filtered_items = []
     for i in list_items:
-        max_i_size = math.hypot(
-            i.GetBoundingBox().GetHeight(), i.GetBoundingBox().GetWidth()
-        )
+        max_i_size = math.hypot(i.GetBoundingBox().GetHeight(), i.GetBoundingBox().GetWidth())
         if distance(item_center, i.GetBoundingBox().GetCenter()) < max_d + max_i_size:
             filtered_items.append(i)
     return filtered_items
 
+def bb_in_shape_poly_set(bb, poly, all_in=False):
+    """Checks if a BOX2I is (entirely or partly) in a SHAPE_POLY_SET."""
+    if all_in:
+        return (
+            poly.Contains(VECTOR2I(bb.GetLeft(), bb.GetTop())) and
+            poly.Contains(VECTOR2I(bb.GetRight(), bb.GetTop())) and
+            poly.Contains(VECTOR2I(bb.GetLeft(), bb.GetBottom())) and
+            poly.Contains(VECTOR2I(bb.GetRight(), bb.GetBottom())) and
+            poly.Contains(VECTOR2I(bb.GetCenter().x, bb.GetCenter().y))
+        )
+    return (
+        poly.Contains(VECTOR2I(bb.GetLeft(), bb.GetTop())) or
+        poly.Contains(VECTOR2I(bb.GetRight(), bb.GetTop())) or
+        poly.Contains(VECTOR2I(bb.GetLeft(), bb.GetBottom())) or
+        poly.Contains(VECTOR2I(bb.GetRight(), bb.GetBottom())) or
+        poly.Contains(VECTOR2I(bb.GetCenter().x, bb.GetCenter().y))
+    )
+
+# --- Main Class ---
 
 class AutoSilkscreen:
-    def __init__(self, pcb):
+    def __init__(self, pcb: pcbnew.BOARD, config: SilkscreenConfig = SilkscreenConfig()):
         self.pcb = pcb
-        self.set_max_allowed_distance(5)
-        self.set_step_size(0.1)
-        self.set_only_process_selection(False)
-        self.set_ignore_vias(True)
-        self.__deflate_factor__ = 1
+        self.config = config
+        self.max_allowed_distance = pcbnew.FromMM(config.max_allowed_distance)
+        self.step_size = pcbnew.FromMM(config.step_size)
+        self.only_process_selection = config.only_process_selection
+        self.ignore_via = config.ignore_vias
+        self.__deflate_factor__ = config.deflate_factor
+        self.logger = logging.getLogger("kicad_auto_silkscreen")
+        if config.debug:
+            logging.basicConfig(level=logging.DEBUG)
+        else:
+            logging.basicConfig(level=logging.INFO)
 
-    # Setters
-    def set_max_allowed_distance(self, max_allowed_distance: float):
-        if max_allowed_distance <= 0:
-            raise ValueError
-        self.max_allowed_distance = pcbnew.FromMM(max_allowed_distance)
-        return self
+    def run(self) -> Tuple[int, int]:
+        """Main entry point: optimize all eligible silkscreen reference/value positions."""
+        vias_all = [trk for trk in self.pcb.Tracks()
+                    if not self.ignore_via
+                    and isinstance(trk, pcbnew.PCB_VIA)
+                    and (trk.TopLayer() == pcbnew.F_Cu or trk.BottomLayer() == pcbnew.B_Cu)]
+        tht_pads_all = [pad for pad in self.pcb.GetPads() if pad.HasHole()]
+        dwgs_all = [dwg for dwg in self.pcb.GetDrawings() if is_silkscreen(dwg)]
+        mask_all = [dwg for dwg in self.pcb.GetDrawings()
+                    if dwg.IsOnLayer(pcbnew.F_Mask) or dwg.IsOnLayer(pcbnew.B_Mask)]
+        fp_all = list(self.pcb.GetFootprints())
+        board_edge = pcbnew.SHAPE_POLY_SET()
+        self.pcb.GetBoardPolygonOutlines(board_edge)
 
-    def set_step_size(self, step_size: float):
-        if step_size <= 0:
-            raise ValueError
-        self.step_size = pcbnew.FromMM(step_size)
-        return self
+        import timeit
+        starttime = timeit.default_timer()
 
-    def set_only_process_selection(self, only_process_selection: bool):
-        self.only_process_selection = only_process_selection
-        return self
+        nb_total = 0
+        nb_moved = 0
 
-    def set_ignore_vias(self, ignore_via: bool):
-        self.ignore_via = ignore_via
-        return self
+        for fp in fp_all:
+            if self.only_process_selection and not fp.IsSelected():
+                continue
 
-    def __isPositionValid(
-        self,
-        item,
-        fp_item,
-        modules,
-        board_edge,
-        vias,
-        tht_pads,
-        masks,
-        drawings,
-        isReference=True,
-    ):
-        """Checks if a reference position is valid, based on:
-        * Contained within board edges
-        * Not colliding with any via
-        * Not colliding with any hole
-        * Not colliding with the courtyard of any component
-        * Not colliding with the reference of any component
-        * Not colliding with the value of any component
-        * Not colliding with solder mask
+            value = fp.Value()
+            ref = fp.Reference()
+            if not is_silkscreen(ref) and not is_silkscreen(value):
+                continue
+
+            fp_bb = fp.GetBoundingBox(False, False)
+            ref_bb = ref.GetBoundingBox()
+            value_bb = value.GetBoundingBox()
+            max_fp_size = (
+                math.hypot(fp_bb.GetWidth(), fp_bb.GetHeight()) / 2
+                + self.max_allowed_distance
+            )
+            if is_silkscreen(ref) and is_silkscreen(value):
+                max_fp_size += (
+                    max(
+                        math.hypot(ref_bb.GetWidth(), ref_bb.GetHeight()),
+                        math.hypot(value_bb.GetWidth(), value_bb.GetHeight()),
+                    ) / 2
+                )
+            elif is_silkscreen(ref):
+                max_fp_size += math.hypot(ref_bb.GetWidth(), ref_bb.GetHeight()) / 2
+            elif is_silkscreen(value):
+                max_fp_size += math.hypot(value_bb.GetWidth(), value_bb.GetHeight()) / 2
+
+            # Filter for local collisions
+            vias = filter_distance(fp_bb.GetCenter(), max_fp_size, vias_all)
+            modules = filter_distance(fp_bb.GetCenter(), max_fp_size, fp_all)
+            tht_pads = filter_distance(fp_bb.GetCenter(), max_fp_size, tht_pads_all)
+            masks = filter_distance(fp_bb.GetCenter(), max_fp_size, mask_all)
+            dwgs = filter_distance(fp_bb.GetCenter(), max_fp_size, dwgs_all)
+
+            if is_silkscreen(ref):
+                nb_total += 1
+                if self.place_field(True, fp, modules, board_edge, vias, tht_pads, masks, dwgs):
+                    nb_moved += 1
+            if is_silkscreen(value):
+                nb_total += 1
+                if self.place_field(False, fp, modules, board_edge, vias, tht_pads, masks, dwgs):
+                    nb_moved += 1
+
+        self.logger.info(f"Execution time is {timeit.default_timer() - starttime:.2f}s")
+        self.logger.info(f"Finished ({nb_moved}/{nb_total} moved)")
+        return nb_moved, nb_total
+
+    def place_field(self, is_reference: bool, fp, modules, board_edge, vias, tht_pads, masks, dwgs) -> bool:
         """
-        bb_item = item.GetBoundingBox()  # BOX2I
+        Try to find a valid position for the field (reference or value) using a spiral-out grid search.
+        Returns True if a valid position is found and set, else False (restores original position).
+        """
+        item = fp.Reference() if is_reference else fp.Value()
+        initial_pos = item.GetPosition()
+        fp_bb = fp.GetBoundingBox(False, False)
+
+        # Center and step sizes in mm
+        center_x_mm = pcbnew.ToMM(fp_bb.GetCenter().x)
+        center_y_mm = pcbnew.ToMM(fp_bb.GetCenter().y)
+        max_dist_mm = self.config.max_allowed_distance
+        step_mm = self.config.step_size
+        max_width_mm = pcbnew.ToMM(fp_bb.GetWidth())
+
+        found = False
+        best_pos = None
+
+        for i in np.arange(0, max_dist_mm + step_mm, step_mm):
+            max_j = max_width_mm / 2 + i
+            for j in np.arange(0, max_j + step_mm, step_mm):
+                for dx_mm, dy_mm in [
+                    (-j, -i), (j, -i), (-j, i), (j, i),
+                    (-i, -j), (i, -j), (-i, j), (i, j)
+                ]:
+                    candidate_x = pcbnew.FromMM(center_x_mm + dx_mm)
+                    candidate_y = pcbnew.FromMM(center_y_mm + dy_mm)
+                    item.SetPosition(VECTOR2I(candidate_x, candidate_y))
+                    if self.is_position_valid(
+                        item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, is_reference
+                    ):
+                        found = True
+                        best_pos = VECTOR2I(candidate_x, candidate_y)
+                        break
+                if found:
+                    break
+            if found:
+                break
+
+        if best_pos is not None:
+            item.SetPosition(best_pos)
+            self.logger.debug(f"{fp.GetReference()} moved to ({pcbnew.ToMM(best_pos.x):.2f},{pcbnew.ToMM(best_pos.y):.2f})")
+            return True
+        else:
+            item.SetPosition(initial_pos)
+            self.logger.debug(f"{fp.GetReference()} couldn't be moved")
+            return False
+
+    def is_position_valid(self, item, fp, modules, board_edge, vias, tht_pads, masks, drawings, is_reference=True) -> bool:
+        """Collision and containment logic for a field at its current position."""
+        bb_item = item.GetBoundingBox()
         bb_item.SetSize(
             int(bb_item.GetWidth() * self.__deflate_factor__),
             int(bb_item.GetHeight() * self.__deflate_factor__),
         )
         item_shape = item.GetEffectiveShape()
 
-        # Check if ref is inside PCB outline
-        if not BB_in_SHAPE_POLY_SET(bb_item, board_edge, True):
+        if not bb_in_shape_poly_set(bb_item, board_edge, all_in=True):
             return False
 
-        # Check if ref is colliding with any FP
-        for fp in modules:
-            # Collides with Ctyd
-            fp_shape = fp.GetCourtyard(item.GetLayer())  # SHAPE_POLY_SET
-            # if BB_in_SHAPE_POLY_SET(bb_item, fp_shape):
-            #     return False
+        for fp2 in modules:
+            fp_shape = fp2.GetCourtyard(item.GetLayer())
             if fp_shape.Collide(item_shape):
                 return False
-
-            # Collides with Reference TODO: algo improvement to nudge it?
-            ref_fp = fp.Reference()
-            if (
-                ((isReference and fp_item != fp) or not isReference)
-                and isSilkscreen(ref_fp)
-                and ref_fp.IsOnLayer(item.GetLayer())
-                and bb_item.Intersects(ref_fp.GetBoundingBox())
-            ):
+            ref_fp = fp2.Reference()
+            if ((is_reference and fp != fp2) or not is_reference) and is_silkscreen(ref_fp) \
+                and ref_fp.IsOnLayer(item.GetLayer()) and bb_item.Intersects(ref_fp.GetBoundingBox()):
                 return False
-
-            # Collides with value field (if it is on the silkscreen)
-            value_fp = fp.Value()
-            if (
-                isSilkscreen(value_fp)
-                and ((not isReference and fp_item != fp) or isReference)
-                and value_fp.IsOnLayer(item.GetLayer())
-                and bb_item.Intersects(value_fp.GetBoundingBox())
-            ):
+            value_fp = fp2.Value()
+            if is_silkscreen(value_fp) \
+                and ((not is_reference and fp != fp2) or is_reference) \
+                and value_fp.IsOnLayer(item.GetLayer()) \
+                and bb_item.Intersects(value_fp.GetBoundingBox()):
                 return False
 
         for via in vias:
-            if (via.TopLayer() == pcbnew.F_Cu and item.IsOnLayer(pcbnew.F_SilkS)) or (
-                via.BottomLayer() == pcbnew.B_Cu and item.IsOnLayer(pcbnew.B_SilkS)
-            ):
+            if (via.TopLayer() == pcbnew.F_Cu and item.IsOnLayer(pcbnew.F_SilkS)) or \
+               (via.BottomLayer() == pcbnew.B_Cu and item.IsOnLayer(pcbnew.B_SilkS)):
                 if bb_item.Intersects(via.GetBoundingBox()):
                     return False
 
-        # Check if ref is colliding with any hole
         for pad in tht_pads:
             if bb_item.Intersects(pad.GetBoundingBox()):
                 return False
 
-        # Check if ref is colliding with solder mask
         for mask in masks:
-            if (
-                (mask.IsOnLayer(pcbnew.F_Mask) and item.IsOnLayer(pcbnew.F_SilkS))
-                or (mask.IsOnLayer(pcbnew.B_Mask) and item.IsOnLayer(pcbnew.B_SilkS))
-                and mask.GetEffectiveShape().Collide(item_shape)
-            ):
+            if ((mask.IsOnLayer(pcbnew.F_Mask) and item.IsOnLayer(pcbnew.F_SilkS)) or
+                (mask.IsOnLayer(pcbnew.B_Mask) and item.IsOnLayer(pcbnew.B_SilkS))) and \
+               mask.GetEffectiveShape().Collide(item_shape):
                 return False
 
-        # Check if ref is colliding with drawings
         for drawing in drawings:
-            if drawing.IsOnLayer(item.GetLayer()) and drawing.GetEffectiveShape(
-                item.GetLayer()
-            ).Collide(item_shape):
+            if drawing.IsOnLayer(item.GetLayer()) and drawing.GetEffectiveShape(item.GetLayer()).Collide(item_shape):
                 return False
+
         return True
-
-    def __search_valid_position(
-        self, isReference, fp, modules, board_edge, vias, tht_pads, masks, dwgs
-    ):
-        item = fp.Reference() if isReference else fp.Value()
-
-        initial_pos = item.GetPosition()
-        fp_bb = fp.GetBoundingBox(False, False)
-        item_bb = item.GetBoundingBox()
-        # if self.__isPositionValid(item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, isReference): return 0
-
-        try:
-            for i in range(0, self.max_allowed_distance, self.step_size):
-                # Sweep x coords: top (left/right from center), bottom (left/right from center)
-                for j in range(0, int(fp_bb.GetWidth() / 2 + i), self.step_size):
-                    item.SetY(
-                        int(
-                            fp_bb.GetTop()
-                            - item_bb.GetHeight() / 2.0 * self.__deflate_factor__
-                            - i
-                        )
-                    )
-                    item.SetX(int(fp_bb.GetCenter().x - j))
-                    if self.__isPositionValid(
-                        item,
-                        fp,
-                        modules,
-                        board_edge,
-                        vias,
-                        tht_pads,
-                        masks,
-                        dwgs,
-                        isReference,
-                    ):
-                        raise StopIteration
-
-                    item.SetX(int(fp_bb.GetCenter().x + j))
-                    if self.__isPositionValid(
-                        item,
-                        fp,
-                        modules,
-                        board_edge,
-                        vias,
-                        tht_pads,
-                        masks,
-                        dwgs,
-                        isReference,
-                    ):
-                        raise StopIteration
-
-                    item.SetY(
-                        int(
-                            fp_bb.GetBottom()
-                            + item_bb.GetHeight() / 2.0 * self.__deflate_factor__
-                            + i
-                        )
-                    )
-                    item.SetX(int(fp_bb.GetCenter().x - j))
-                    if self.__isPositionValid(
-                        item,
-                        fp,
-                        modules,
-                        board_edge,
-                        vias,
-                        tht_pads,
-                        masks,
-                        dwgs,
-                        isReference,
-                    ):
-                        raise StopIteration
-
-                    item.SetX(int(fp_bb.GetCenter().x + j))
-                    if self.__isPositionValid(
-                        item,
-                        fp,
-                        modules,
-                        board_edge,
-                        vias,
-                        tht_pads,
-                        masks,
-                        dwgs,
-                        isReference,
-                    ):
-                        raise StopIteration
-
-                # Sweep y coords: left (top/bot from center), right (top/bot from center)
-                for j in range(0, int(fp_bb.GetHeight() / 2 + i), self.step_size):
-                    item.SetX(
-                        int(
-                            fp_bb.GetLeft()
-                            - item_bb.GetWidth() / 2.0 * self.__deflate_factor__
-                            - i
-                        )
-                    )
-                    item.SetY(int(fp_bb.GetCenter().y - j))
-                    if self.__isPositionValid(
-                        item,
-                        fp,
-                        modules,
-                        board_edge,
-                        vias,
-                        tht_pads,
-                        masks,
-                        dwgs,
-                        isReference,
-                    ):
-                        raise StopIteration
-
-                    item.SetY(int(fp_bb.GetCenter().y + j))
-                    if self.__isPositionValid(
-                        item,
-                        fp,
-                        modules,
-                        board_edge,
-                        vias,
-                        tht_pads,
-                        masks,
-                        dwgs,
-                        isReference,
-                    ):
-                        raise StopIteration
-
-                    item.SetX(
-                        int(
-                            fp_bb.GetRight()
-                            + item_bb.GetWidth() / 2.0 * self.__deflate_factor__
-                            + i
-                        )
-                    )
-                    item.SetY(int(fp_bb.GetCenter().y - j))
-                    if self.__isPositionValid(
-                        item,
-                        fp,
-                        modules,
-                        board_edge,
-                        vias,
-                        tht_pads,
-                        masks,
-                        dwgs,
-                        isReference,
-                    ):
-                        raise StopIteration
-
-                    item.SetY(int(fp_bb.GetCenter().y + j))
-                    if self.__isPositionValid(
-                        item,
-                        fp,
-                        modules,
-                        board_edge,
-                        vias,
-                        tht_pads,
-                        masks,
-                        dwgs,
-                        isReference,
-                    ):
-                        raise StopIteration
-            # Reset to initial position if not able to be moved
-            item.SetPosition(initial_pos)
-            _log.debug(f"{fp.GetReference()!s} couldn't be moved")
-            return 0
-        except StopIteration:
-            _log.debug(
-                f"{fp.GetReference()!s} moved to ({pcbnew.ToMM(item.GetPosition().x):.2f},{pcbnew.ToMM(item.GetPosition().y):.2f})"
-            )
-            return 1
-
-    def run(self):
-        # Get PCB collision items
-        # Get the vias (except buried vias)
-        _log.setLevel(logging.DEBUG)
-        _log.info("RUN")
-        _log.debug("RUN")
-        vias_all = [
-            trk
-            for trk in self.pcb.Tracks()
-            if not self.ignore_via
-            and isinstance(trk, pcbnew.PCB_VIA)
-            and (trk.TopLayer() == pcbnew.F_Cu or trk.BottomLayer() == pcbnew.B_Cu)
-        ]
-        # Get the PTH/NPTH pads
-        tht_pads_all = [pad for pad in self.pcb.GetPads() if pad.HasHole()]
-        # Get the silkscreen drawings
-        dwgs_all = [dwg for dwg in self.pcb.GetDrawings() if isSilkscreen(dwg)]
-        # Get solder mask
-        mask_all = [
-            dwg
-            for dwg in self.pcb.GetDrawings()
-            if dwg.IsOnLayer(pcbnew.F_Mask) or dwg.IsOnLayer(pcbnew.B_Mask)
-        ]
-        # Get footprints
-        fp_all = list(self.pcb.GetFootprints())
-        # Get board outline
-        board_edge = pcbnew.SHAPE_POLY_SET()
-        self.pcb.GetBoardPolygonOutlines(board_edge)
-
-        import timeit
-
-        starttime = timeit.default_timer()
-
-        nb_total = 0
-        nb_moved = 0
-
-        # Loop over each component of the PCB
-        for fp in fp_all:
-            _log.debug(f"{fp!r}")
-            # Check if the FP should processed
-            if self.only_process_selection and not fp.IsSelected():
-                continue
-
-            value = fp.Value()
-            ref = fp.Reference()
-
-            # Check if there is anything to move
-            if not isSilkscreen(ref) and not isSilkscreen(value):
-                continue
-
-            fp_bb = fp.GetBoundingBox(False, False)
-            ref_bb = ref.GetBoundingBox()
-            value_bb = value.GetBoundingBox()
-
-            max_fp_size = (
-                math.hypot(fp_bb.GetWidth(), fp_bb.GetHeight()) / 2
-                + self.max_allowed_distance
-            )
-            if isSilkscreen(ref) and isSilkscreen(value):
-                max_fp_size += (
-                    max(
-                        math.hypot(ref_bb.GetWidth(), ref_bb.GetHeight()),
-                        math.hypot(value_bb.GetWidth(), value_bb.GetHeight()),
-                    )
-                    / 2
-                )
-            elif isSilkscreen(ref):
-                max_fp_size += math.hypot(ref_bb.GetWidth(), ref_bb.GetHeight()) / 2
-            elif isSilkscreen(value):
-                max_fp_size += math.hypot(value_bb.GetWidth(), value_bb.GetHeight()) / 2
-
-            # Filter the vias
-            vias = filter_distance(fp_bb.GetCenter(), max_fp_size, vias_all)
-            # Filter footprints
-            # FIXME does not account for REF/VALUE size!
-            modules = filter_distance(fp_bb.GetCenter(), max_fp_size, fp_all)
-            # Filter THT pads
-            tht_pads = filter_distance(fp_bb.GetCenter(), max_fp_size, tht_pads_all)
-            # Filter solder mask
-            masks = filter_distance(fp_bb.GetCenter(), max_fp_size, mask_all)
-            # Filter drawings
-            dwgs = filter_distance(fp_bb.GetCenter(), max_fp_size, dwgs_all)
-
-            # Sweep positions
-            if isSilkscreen(ref):
-                nb_total += 1
-                nb_moved += self.__search_valid_position(
-                    True, fp, modules, board_edge, vias, tht_pads, masks, dwgs
-                )
-            if isSilkscreen(value):
-                nb_total += 1
-                nb_moved += self.__search_valid_position(
-                    False, fp, modules, board_edge, vias, tht_pads, masks, dwgs
-                )
-
-        _log.info(f"Execution time is {timeit.default_timer() - starttime:.2f}s")
-        _log.info(f"Finished ({nb_moved}/{nb_total} moved)")
-
-        return nb_moved, nb_total
