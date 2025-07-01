@@ -5,16 +5,21 @@ from typing import Any, List, Tuple
 import pcbnew
 from pcbnew import VECTOR2I
 import numpy as np
+import numpy as np
+from scipy.optimize import dual_annealing
+
 
 # --- Config and Utility Classes ---
 
 @dataclass
 class SilkscreenConfig:
     max_allowed_distance: float = 5.0   # mm
+    method: str = "anneal"
     step_size: float = 0.1              # mm
     only_process_selection: bool = False
     ignore_vias: bool = True
     deflate_factor: float = 1.0
+    maxiter: int = 100
     debug: bool = True
 
 def is_silkscreen(item) -> bool:
@@ -30,12 +35,30 @@ def distance(a, b) -> float:
     return math.hypot(a.x - b.x, a.y - b.y)
 
 def filter_distance(item_center, max_d, list_items) -> list:
-    filtered_items = []
-    for i in list_items:
-        max_i_size = math.hypot(i.GetBoundingBox().GetHeight(), i.GetBoundingBox().GetWidth())
-        if distance(item_center, i.GetBoundingBox().GetCenter()) < max_d + max_i_size:
-            filtered_items.append(i)
-    return filtered_items
+    item_cx = item_center.x
+    item_cy = item_center.y
+
+    # Precompute all centers and sizes
+    centers = []
+    max_sizes = []
+
+    for obj in list_items:
+        bb = obj.GetBoundingBox()
+        center = bb.GetCenter()
+        width = bb.GetWidth()
+        height = bb.GetHeight()
+        centers.append((center.x, center.y))
+        max_sizes.append(math.hypot(width, height))
+
+    centers = np.array(centers, dtype=np.float64).reshape(-1, 2)
+    max_sizes = np.array(max_sizes)
+
+    dx = centers[:, 0] - item_cx
+    dy = centers[:, 1] - item_cy
+    dists = np.hypot(dx, dy)
+
+    keep_mask = dists < (max_d + max_sizes)
+    return [obj for obj, keep in zip(list_items, keep_mask) if keep]
 
 def bb_in_shape_poly_set(bb, poly, all_in=False):
     """Checks if a BOX2I is (entirely or partly) in a SHAPE_POLY_SET."""
@@ -71,6 +94,10 @@ class AutoSilkscreen:
             logging.basicConfig(level=logging.DEBUG)
         else:
             logging.basicConfig(level=logging.INFO)
+        if self.config.method == "anneal":
+            self.place_field = self.place_field_annealling
+        else:
+            self.place_field = self.place_field_brute_force
 
     def run(self) -> Tuple[int, int]:
         """Main entry point: optimize all eligible silkscreen reference/value positions."""
@@ -140,7 +167,66 @@ class AutoSilkscreen:
         self.logger.info(f"Finished ({nb_moved}/{nb_total} moved)")
         return nb_moved, nb_total
 
-    def place_field(self, is_reference: bool, fp, modules, board_edge, vias, tht_pads, masks, dwgs) -> bool:
+
+    def place_field_annealling(self, is_reference: bool, fp, modules, board_edge, vias, tht_pads, masks, dwgs) -> bool:
+        """
+        Use simulated annealing (dual_annealing) to optimize silkscreen field placement.
+        Returns True if a valid position is found and set, else False.
+        """
+        item = fp.Reference() if is_reference else fp.Value()
+        initial_pos = item.GetPosition()
+        fp_bb = fp.GetBoundingBox(False, False)
+
+        center_x_mm = pcbnew.ToMM(fp_bb.GetCenter().x)
+        center_y_mm = pcbnew.ToMM(fp_bb.GetCenter().y)
+        max_dist_mm = self.config.max_allowed_distance
+
+        bounds = [
+            (center_x_mm - max_dist_mm, center_x_mm + max_dist_mm),
+            (center_y_mm - max_dist_mm, center_y_mm + max_dist_mm)
+        ]
+
+        def objective(pos_mm):
+            candidate_x = pcbnew.FromMM(float(pos_mm[0]))
+            candidate_y = pcbnew.FromMM(float(pos_mm[1]))
+            prev_pos = item.GetPosition()
+            item.SetPosition(VECTOR2I(candidate_x, candidate_y))
+
+            # Quick preliminary check - e.g., bounding box inside board edges
+            if not bb_in_shape_poly_set(item.GetBoundingBox(), board_edge, all_in=True):
+                item.SetPosition(prev_pos)
+                return 1e6
+
+            valid = self.is_position_valid(
+                item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, is_reference
+            )
+
+            # Reset to previous position to avoid side-effects
+            item.SetPosition(prev_pos)
+
+            if not valid:
+                # Large penalty plus a small distance term to encourage moves closer to center
+                return 1e6 + np.hypot(pos_mm[0] - center_x_mm, pos_mm[1] - center_y_mm)
+            # Minimize distance to center
+            return np.hypot(pos_mm[0] - center_x_mm, pos_mm[1] - center_y_mm)
+
+        result = dual_annealing(objective, bounds, maxiter=self.config.maxiter)
+
+        if result.fun < 1e5:
+            x_best, y_best = result.x
+            best_pos = VECTOR2I(pcbnew.FromMM(float(x_best)), pcbnew.FromMM(float(y_best)))
+            item.SetPosition(best_pos)
+            self.logger.debug(
+                f"{fp.GetReference()} moved to ({pcbnew.ToMM(float(best_pos.x)):.2f},{pcbnew.ToMM(float(best_pos.y)):.2f})"
+            )
+            return True
+        else:
+            item.SetPosition(initial_pos)
+            self.logger.debug(f"{fp.GetReference()} couldn't be moved")
+            return False
+
+
+    def place_field_brute_force(self, is_reference: bool, fp, modules, board_edge, vias, tht_pads, masks, dwgs) -> bool:
         """
         Try to find a valid position for the field (reference or value) using a spiral-out grid search.
         Returns True if a valid position is found and set, else False (restores original position).
@@ -166,8 +252,8 @@ class AutoSilkscreen:
                     (-j, -i), (j, -i), (-j, i), (j, i),
                     (-i, -j), (i, -j), (-i, j), (i, j)
                 ]:
-                    candidate_x = pcbnew.FromMM(center_x_mm + dx_mm)
-                    candidate_y = pcbnew.FromMM(center_y_mm + dy_mm)
+                    candidate_x = pcbnew.FromMM(float(center_x_mm + dx_mm))
+                    candidate_y = pcbnew.FromMM(float(center_y_mm + dy_mm))
                     item.SetPosition(VECTOR2I(candidate_x, candidate_y))
                     if self.is_position_valid(
                         item, fp, modules, board_edge, vias, tht_pads, masks, dwgs, is_reference
@@ -182,7 +268,7 @@ class AutoSilkscreen:
 
         if best_pos is not None:
             item.SetPosition(best_pos)
-            self.logger.debug(f"{fp.GetReference()} moved to ({pcbnew.ToMM(best_pos.x):.2f},{pcbnew.ToMM(best_pos.y):.2f})")
+            self.logger.debug(f"{fp.GetReference()} moved to ({pcbnew.ToMM(float(best_pos.x)):.2f},{pcbnew.ToMM(float(best_pos.y)):.2f})")
             return True
         else:
             item.SetPosition(initial_pos)
@@ -196,10 +282,11 @@ class AutoSilkscreen:
             int(bb_item.GetWidth() * self.__deflate_factor__),
             int(bb_item.GetHeight() * self.__deflate_factor__),
         )
-        item_shape = item.GetEffectiveShape()
 
         if not bb_in_shape_poly_set(bb_item, board_edge, all_in=True):
             return False
+
+        item_shape = item.GetEffectiveShape()
 
         for fp2 in modules:
             fp_shape = fp2.GetCourtyard(item.GetLayer())
