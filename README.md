@@ -1,47 +1,29 @@
 # KiCad Auto Silkscreen Placer
 
-**Compatibility:** KiCad 8.0. *Not tested with KiCad 6.0.*
+**Compatibility:** KiCad v8 & v9
 
-## Plugin presentation
+## Overview
 
-This KiCad plugin automatically computes positions for all silkscreen reference designators and value that are free of overlap with other PCB elements (footprints including their reference designators, solder mask, vias, PTH/NPTH holes, etc.).
+This KiCad plugin automatically computes optimal positions for silkscreen reference designators and values, ensuring they do not overlap with other PCB elements such as footprints, solder masks, vias, and holes. The positions are determined using either a **simulated annealing method** or **brute force**, which iteratively adjusts positions to minimize overlap.
 
-<!-- ![](./sample_output.png) -->
+The tool is most useful after you’ve laid out and routed your board. It will automate the placement of reference designators and values, saving time compared to manual placement. Some fine-tuning may still be necessary.
 
-It is intended to be used after laying out and routing a board to place most of the designators in an adequate position. Some manual work might still be required to improve the silkscreen, but this plugin will save a lot of time over doing it entirely manually.
+## Usage
+This is python library and command line tool:
 
-## Install instructions
-
-**Warning:** this plugin is under active development, but it is in working state.
-
-To install the plugin from GitHub:
-1. Clone/download this repository and extract it to your KiCad plugin folder. You can find it by opening the PCB editor, and using "Tools" > "Externals Plugins" > "Open Plugin Directory".
-2. Refresh the plugins by restarting the PCB editor or using "Tools" > "Externals Plugins" > "Refresh Plugins".
-
-## Usage instructions
-
-**It is recommended to back-up the PCB file before using this plugin.** The changes made by executing the plugin can be reverted by pressing "Undo" (Ctrl+Z).
-
-Use the button in the toolbar to open the plugin window and configure its parameters.
-
-The processing time of the plugin depend on the complexity of the PCB and the value of the parameters. It can take multiple minutes.
-
-## Speed
-The speed is dominated by the time it takes to calculate an object collision. Out of a time of 855.025 the built-in collision calculation takes 542s.
-```
-14508404  542.707    0.000  542.707    0.000 {built-in method _pcbnew.SHAPE_POLY_SET_Collide}
+```bash
+kicad_auto_silkscreen --method anneal --board test.kicad_pcb --out out-annealed.kicad_pcb --step-size 0.1 --maxiter 100 --max-allowed-distance 10
 ```
 
-## Upgrades
-+ Turn all objects into a bounding box. Some are movable (silkscreen value & ref des labels), some immovable (i.e. pads)
-+ Recursive alogorithm with boxes of boxes
-+ No rotation of parts (possible feature later for none grouped parts only)
-+ Sets of movable parts can be grouped, outlined and have a line drawn to the location of the group
-+ If the density is too high then the text size is shrunk. This can be used recursively for blocks themselves if the density is too high
+
+## Performance
+
+The speed of the plugin is primarily affected by the time it takes to compute object collisions. For example, out of a total processing time of 855.025 seconds, the built-in collision calculation takes 542 seconds.
+
 
 ## References
-+ https://github.com/coffeenmusic/Silkscreen_Auto_Placer
 
-## License
+- Originally forked from: [coffeenmusic/Silkscreen_Auto_Placer](https://github.com/coffeenmusic/Silkscreen_Auto_Placer)
 
-This plugin is published under MIT license.
+
+
