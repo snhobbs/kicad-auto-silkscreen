@@ -16,7 +16,7 @@ class DynamicSilkscreenCommand(click.Command):
 
             # Handle boolean flags
             if field_type == bool:
-                option = click.Option(param_decls=[option_name], is_flag=True, default=dault_value)
+                option = click.Option(param_decls=[option_name], is_flag=True, default=default_value)
             else:
                 # For other types, use the appropriate click type (str, int, float, etc.)
                 option = click.Option(param_decls=[option_name], default=default_value, type=field_type)
