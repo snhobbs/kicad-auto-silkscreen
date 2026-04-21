@@ -24,6 +24,3 @@ The speed of the plugin is primarily affected by the time it takes to compute ob
 ## References
 
 - Originally forked from: [coffeenmusic/Silkscreen_Auto_Placer](https://github.com/coffeenmusic/Silkscreen_Auto_Placer)
-
-
-

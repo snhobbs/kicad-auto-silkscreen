@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import re
@@ -14,10 +15,8 @@ icons_path = src_path.parent / "icons"
 resources_path = icons_path
 
 # Delete build and recreate
-try:
+with contextlib.suppress(FileNotFoundError):
     shutil.rmtree(build_path)
-except FileNotFoundError:
-    pass
 
 os.makedirs(build_path / "plugin")
 os.makedirs(build_path / "plugin" / "resources")
@@ -52,10 +51,7 @@ with metadata.open("r") as f:
 verstrline = version_path.open("rt").read()
 VSRE = r"^__version__ = ['\"]([^'\"]*)['\"]"
 mo = re.search(VSRE, verstrline, re.M)
-if mo:
-    verstr = mo.group(1)
-else:
-    verstr = "1.0.0"
+verstr = mo.group(1) if mo else "1.0.0"
 
 # Update download URL
 md["versions"][0].update(
@@ -71,7 +67,7 @@ with metadata.open("w") as of:
 
 # Zip all files
 
-pcm_name = "releases/kicad-auto-silkscreen-{0}".format(md["versions"][0]["version"])
+pcm_name = "releases/kicad-auto-silkscreen-{}".format(md["versions"][0]["version"])
 pcm_path = build_path / pcm_name
 zip_file = shutil.make_archive(pcm_path, "zip", build_path / "plugin")
 

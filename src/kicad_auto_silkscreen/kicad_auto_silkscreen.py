@@ -3,8 +3,20 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-import pcbnew
-from pcbnew import VECTOR2I
+
+_log = logging.getLogger(__name__)
+
+KICAD_FOUND = False
+try:
+    import pcbnew
+
+    KICAD_FOUND = True
+except ImportError:
+    _log.warning("KiCAD Not Available")
+
+if KICAD_FOUND:
+    from pcbnew import VECTOR2I
+
 from scipy.optimize import dual_annealing
 
 INF_ERROR_VALUE = 1e6
@@ -83,7 +95,7 @@ def bb_in_shape_poly_set(bb, poly, all_in=False):
 
 class AutoSilkscreen:
     def __init__(
-        self, pcb: pcbnew.BOARD, config: SilkscreenConfig = SilkscreenConfig()
+        self, pcb: "pcbnew.BOARD", config: SilkscreenConfig = SilkscreenConfig()
     ):
         self.pcb = pcb
         self.config = config

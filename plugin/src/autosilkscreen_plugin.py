@@ -13,6 +13,8 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(dirname))
     __import__(__package__)
 
+import contextlib
+
 from . import auto_silkscreen_dialog
 from .kicad_auto_silkscreen import AutoSilkscreen
 
@@ -76,10 +78,8 @@ class AutoSilkscreenPlugin(pcbnew.ActionPlugin):
 
 
 if __name__ == "__main__":
-    try:
+    with contextlib.suppress(IndexError):
         _board = pcbnew.LoadBoard(sys.argv[1])
-    except IndexError:
-        pass
     # run_with_dialog()
 
     app = wx.App()

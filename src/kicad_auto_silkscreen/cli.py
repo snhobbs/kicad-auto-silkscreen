@@ -1,27 +1,34 @@
-import logging
 from dataclasses import fields
+
 import click
-import pcbnew
+
 from . import kicad_auto_silkscreen
-from . kicad_auto_silkscreen import SilkscreenConfig
+from .kicad_auto_silkscreen import SilkscreenConfig
+
+if kicad_auto_silkscreen.KICAD_FOUND:
+    import pcbnew
 
 
 class DynamicSilkscreenCommand(click.Command):
     def __init__(self, *args, **kwargs):
         # Dynamically add options based on the dataclass fields
         for field in fields(SilkscreenConfig):
-            option_name = f'--{field.name.replace("_", "-")}'
+            option_name = f"--{field.name.replace('_', '-')}"
             field_type = field.type
             default_value = getattr(SilkscreenConfig, field.name)
 
             # Handle boolean flags
-            if field_type == bool:
-                option = click.Option(param_decls=[option_name], is_flag=True, default=dault_value)
+            if field_type is bool:
+                option = click.Option(
+                    param_decls=[option_name], is_flag=True, default=default_value
+                )
             else:
                 # For other types, use the appropriate click type (str, int, float, etc.)
-                option = click.Option(param_decls=[option_name], default=default_value, type=field_type)
+                option = click.Option(
+                    param_decls=[option_name], default=default_value, type=field_type
+                )
 
-            kwargs.setdefault('params', []).append(option)
+            kwargs.setdefault("params", []).append(option)
         super().__init__(*args, **kwargs)
 
 
