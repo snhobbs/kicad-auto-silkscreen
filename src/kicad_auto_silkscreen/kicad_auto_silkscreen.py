@@ -132,7 +132,11 @@ class AutoSilkscreen:
         ]
         fp_all = list(self.pcb.GetFootprints())
         board_edge = pcbnew.SHAPE_POLY_SET()
-        self.pcb.GetBoardPolygonOutlines(board_edge)
+        try:
+            # KiCad 10 added the required aInferOutlineIfNecessary argument
+            self.pcb.GetBoardPolygonOutlines(board_edge, True)
+        except TypeError:
+            self.pcb.GetBoardPolygonOutlines(board_edge)
 
         import timeit
 
